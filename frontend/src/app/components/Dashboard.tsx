@@ -16,6 +16,12 @@ import {
   BarChart,
   Bar,
 } from "recharts";
+import DrawdownChart from "./DrawdownChart";
+import RollingMetricsChart from "./RollingMetricsChart";
+import MultiAssetComparison from "./MultiAssetComparison";
+import BenchmarkComparison from "./BenchmarkComparison";
+import CorrelationMatrix from "./CorrelationMatrix";
+import CostAnalysis from "./CostAnalysis";
 
 interface PortfolioMetrics {
   total_value: number;
@@ -84,6 +90,8 @@ export default function Dashboard() {
   const [history, setHistory] = useState<HistoryPoint[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [macroData, setMacroData] = useState<any[]>([]);
+  const [lastUpdated, setLastUpdated] = useState<string>("");
 
   useEffect(() => {
     fetchDashboardData();
@@ -95,10 +103,11 @@ export default function Dashboard() {
       setError(null);
 
       // Fetch all dashboard data in parallel
-      const [portfolioRes, performanceRes, tradesRes] = await Promise.all([
+      const [portfolioRes, performanceRes, tradesRes, macroRes] = await Promise.all([
         fetch("http://localhost:8000/api/portfolio/current"),
         fetch("http://localhost:8000/api/portfolio/performance"),
         fetch("http://localhost:8000/api/portfolio/trades?limit=50"),
+        fetch("http://localhost:8000/api/macro?limit=1"),
       ]);
 
       if (!portfolioRes.ok || !performanceRes.ok || !tradesRes.ok) {
@@ -108,12 +117,15 @@ export default function Dashboard() {
       const portfolio = await portfolioRes.json();
       const performance = await performanceRes.json();
       const tradesData = await tradesRes.json();
+      const macroResult = await macroRes.json();
 
       setPortfolioData(portfolio);
       setPerformanceMetrics(performance.performance_metrics);
       setRiskMetrics(performance.risk_metrics);
       setTrades(tradesData.trades);
       setHistory(performance.history || []);
+      setMacroData(macroResult.data || []);
+      setLastUpdated(new Date().toLocaleString());
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
     } finally {
@@ -158,6 +170,27 @@ export default function Dashboard() {
     }
   };
 
+  const exportData = () => {
+    if (!history.length) return;
+    
+    const csvContent = [
+      "Date,Portfolio Value,Cash,Daily Return,Cumulative Return",
+      ...history.map(h => 
+        `${h.timestamp},${h.total_value},${h.cash},${h.daily_return},${h.cumulative_return}`
+      )
+    ].join("\n");
+    
+    const blob = new Blob([csvContent], { type: "text/csv" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `portfolio-history-${new Date().toISOString().split('T')[0]}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(url);
+  };
+
   if (loading) {
     return <div className="flex items-center justify-center h-96">Loading dashboard...</div>;
   }
@@ -184,8 +217,23 @@ export default function Dashboard() {
   return (
     <div className="w-full p-6 space-y-6">
       <div className="flex justify-between items-center">
-        <h1 className="text-3xl font-bold">Hedge Fund Dashboard</h1>
+        <div>
+          <h1 className="text-3xl font-bold">Hedge Fund Dashboard</h1>
+          <p className="text-sm text-gray-500 mt-1">Last updated: {lastUpdated}</p>
+        </div>
         <div className="flex gap-4">
+          <button
+            onClick={fetchDashboardData}
+            className="px-4 py-2 bg-gray-500 text-white rounded-md hover:bg-gray-600"
+          >
+            Refresh
+          </button>
+          <button
+            onClick={exportData}
+            className="px-4 py-2 bg-green-500 text-white rounded-md hover:bg-green-600"
+          >
+            Export Data
+          </button>
           <button
             onClick={executeStrategy}
             className="px-6 py-2 bg-blue-500 text-white rounded-md hover:bg-blue-600"
@@ -255,6 +303,55 @@ export default function Dashboard() {
               `${(performanceMetrics.win_rate * 100).toFixed(1)}%` : 
               "0.0%"
             }
+          </p>
+        </div>
+
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h3 className="text-sm font-medium text-gray-500">Beta</h3>
+          <p className="text-2xl font-bold text-indigo-600">
+            {riskMetrics?.beta?.toFixed(2) || "0.00"}
+          </p>
+          <p className="text-sm text-gray-600">
+            Market Sensitivity
+          </p>
+        </div>
+
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h3 className="text-sm font-medium text-gray-500">Alpha</h3>
+          <p className={`text-2xl font-bold ${(riskMetrics?.alpha || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+            {riskMetrics?.alpha ? 
+              `${(riskMetrics.alpha * 100).toFixed(2)}%` : 
+              "0.00%"
+            }
+          </p>
+          <p className="text-sm text-gray-600">
+            Excess Return vs Benchmark
+          </p>
+        </div>
+
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h3 className="text-sm font-medium text-gray-500">VaR (95%)</h3>
+          <p className="text-2xl font-bold text-orange-600">
+            {riskMetrics?.var_95 ? 
+              `${(Math.abs(riskMetrics.var_95) * 100).toFixed(2)}%` : 
+              "0.00%"
+            }
+          </p>
+          <p className="text-sm text-gray-600">
+            Daily Loss Risk
+          </p>
+        </div>
+
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h3 className="text-sm font-medium text-gray-500">Annualized Return</h3>
+          <p className="text-2xl font-bold text-teal-600">
+            {performanceMetrics?.total_return && history.length > 252 ? 
+              `${(performanceMetrics.total_return * 252 / history.length * 100).toFixed(2)}%` : 
+              "0.00%"
+            }
+          </p>
+          <p className="text-sm text-gray-600">
+            Trades: {performanceMetrics?.total_trades || 0}
           </p>
         </div>
       </div>
@@ -331,6 +428,67 @@ export default function Dashboard() {
           </ResponsiveContainer>
         </div>
       </div>
+
+      {/* Drawdown & Rolling Metrics */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <DrawdownChart />
+        </div>
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <RollingMetricsChart />
+        </div>
+      </div>
+
+      {/* Multi-Asset Performance & Benchmark Comparison */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <MultiAssetComparison />
+        </div>
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <BenchmarkComparison />
+        </div>
+      </div>
+
+      {/* Cost Analysis & Correlation Matrix */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <CostAnalysis />
+        </div>
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <CorrelationMatrix />
+        </div>
+      </div>
+
+      {/* Macro Indicators */}
+      {macroData.length > 0 && (
+        <div className="bg-white p-6 rounded-lg shadow-md">
+          <h2 className="text-xl font-bold mb-4">Current Macro Environment</h2>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {macroData.map((macro, idx) => (
+              <div key={idx} className="space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-sm text-gray-600">Inflation</span>
+                  <span className="font-bold">{macro.Inflation?.toFixed(2)}%</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm text-gray-600">Interest Rate</span>
+                  <span className="font-bold">{macro.Interest_Rate?.toFixed(2)}%</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm text-gray-600">USD Index</span>
+                  <span className="font-bold">{macro.USD_Index?.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm text-gray-600">Sentiment</span>
+                  <span className={`font-bold ${macro.Sentiment >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {macro.Sentiment?.toFixed(2)}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Positions and Trades */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

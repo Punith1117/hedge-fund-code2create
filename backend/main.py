@@ -386,6 +386,172 @@ async def update_risk_limits(max_position_size: float = 0.30, stop_loss_threshol
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+# Additional Dashboard Endpoints
+
+@app.get("/api/portfolio/drawdown-history")
+async def get_drawdown_history():
+    """Get drawdown history for visualization"""
+    try:
+        drawdown_data = portfolio_manager.get_drawdown_history()
+        return {
+            "drawdown_history": drawdown_data[-500:],  # Last 500 points
+            "updated_at": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/portfolio/rolling-metrics")
+async def get_rolling_metrics(window: int = 30):
+    """Get rolling Sharpe ratio and volatility"""
+    try:
+        history = portfolio_manager.get_portfolio_history()
+        if len(history) < window:
+            return {"error": "Insufficient data for rolling metrics"}
+        
+        returns = pd.Series([h['daily_return'] for h in history])
+        rolling_metrics = risk_manager.calculate_rolling_metrics(returns, window)
+        
+        # Add timestamps
+        result = []
+        for i, metric in enumerate(rolling_metrics):
+            result.append({
+                "timestamp": history[window + i - 1]['timestamp'],
+                **metric
+            })
+        
+        return {
+            "rolling_metrics": result[-500:],
+            "window": window,
+            "updated_at": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/multi-asset/performance")
+async def get_multi_asset_performance():
+    """Get multi-asset performance comparison"""
+    try:
+        # Calculate returns for each asset
+        multi_asset_data_copy = multi_asset_data.copy()
+        multi_asset_data_copy['Date'] = pd.to_datetime(multi_asset_data_copy['Date'])
+        
+        # Calculate cumulative returns
+        assets = ['Oil', 'Gold', 'Bonds']
+        performance_data = []
+        
+        for asset in assets:
+            if f'{asset}_Returns' in multi_asset_data_copy.columns:
+                returns_col = f'{asset}_Returns'
+                multi_asset_data_copy[f'{asset}_Cumulative'] = (1 + multi_asset_data_copy[returns_col].fillna(0)).cumprod()
+        
+        # Also add equity cumulative returns
+        equity_data_copy = equity_data.copy()
+        equity_data_copy['Date'] = pd.to_datetime(equity_data_copy['Date'])
+        equity_data_copy['Equity_Cumulative'] = (1 + equity_data_copy['Returns'].fillna(0)).cumprod()
+        
+        # Merge data
+        merged = pd.merge(
+            multi_asset_data_copy[['Date', 'Oil_Cumulative', 'Gold_Cumulative', 'Bonds_Cumulative']],
+            equity_data_copy[['Date', 'Equity_Cumulative']],
+            on='Date',
+            how='inner'
+        )
+        
+        # Format for response
+        for _, row in merged.tail(500).iterrows():
+            performance_data.append({
+                "timestamp": row['Date'].strftime('%Y-%m-%d'),
+                "equity_return": (row['Equity_Cumulative'] - 1) * 100,
+                "oil_return": (row['Oil_Cumulative'] - 1) * 100,
+                "gold_return": (row['Gold_Cumulative'] - 1) * 100,
+                "bonds_return": (row['Bonds_Cumulative'] - 1) * 100
+            })
+        
+        return {
+            "performance_data": performance_data,
+            "updated_at": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/portfolio/benchmark-comparison")
+async def get_benchmark_comparison():
+    """Get portfolio vs benchmark comparison"""
+    try:
+        history = portfolio_manager.get_portfolio_history()
+        if len(history) < 2:
+            return {"error": "Insufficient data"}
+        
+        # Use equity as benchmark
+        equity_data_copy = equity_data.copy()
+        equity_data_copy['Date'] = pd.to_datetime(equity_data_copy['Date'])
+        equity_data_copy['Benchmark_Cumulative'] = (1 + equity_data_copy['Returns'].fillna(0)).cumprod()
+        
+        comparison_data = []
+        for i, snap in enumerate(history[-500:]):
+            # Find corresponding benchmark value
+            snap_date = pd.to_datetime(snap['timestamp'])
+            equity_row = equity_data_copy[equity_data_copy['Date'] <= snap_date].iloc[-1] if len(equity_data_copy) > 0 else None
+            
+            if equity_row is not None:
+                benchmark_return = (equity_row['Benchmark_Cumulative'] - 1) * 100
+                portfolio_return = snap['cumulative_return'] * 100
+                
+                comparison_data.append({
+                    "timestamp": snap['timestamp'],
+                    "portfolio_value": snap['total_value'],
+                    "portfolio_return": portfolio_return,
+                    "benchmark_return": benchmark_return,
+                    "alpha": portfolio_return - benchmark_return
+                })
+        
+        return {
+            "comparison_data": comparison_data,
+            "updated_at": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/portfolio/cost-analysis")
+async def get_cost_analysis():
+    """Get transaction cost analysis"""
+    try:
+        cost_data = portfolio_manager.get_cost_analysis()
+        return {
+            "cost_analysis": cost_data,
+            "updated_at": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/metrics/correlation-matrix")
+async def get_correlation_matrix():
+    """Get asset correlation matrix"""
+    try:
+        # Prepare returns data for all assets
+        returns_data = pd.DataFrame()
+        
+        # Equity returns
+        equity_data_copy = equity_data.copy()
+        returns_data['Equity'] = equity_data_copy['Returns'].fillna(0)
+        
+        # Multi-asset returns
+        multi_asset_data_copy = multi_asset_data.copy()
+        for asset in ['Oil', 'Gold', 'Bonds']:
+            if f'{asset}_Returns' in multi_asset_data_copy.columns:
+                returns_data[asset] = multi_asset_data_copy[f'{asset}_Returns'].fillna(0)
+        
+        # Calculate correlation matrix
+        corr_matrix = risk_manager.calculate_correlation_matrix(returns_data)
+        
+        return {
+            "correlation_matrix": corr_matrix,
+            "assets": list(returns_data.columns),
+            "updated_at": datetime.now().isoformat()
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)

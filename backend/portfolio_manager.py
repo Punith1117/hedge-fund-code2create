@@ -25,6 +25,8 @@ class PortfolioSnapshot:
     positions: Dict[str, Dict]
     daily_return: float = 0.0
     cumulative_return: float = 0.0
+    drawdown: float = 0.0
+    peak_value: float = 0.0
 
 class PortfolioManager:
     def __init__(self, initial_capital: float = 100000):
@@ -36,6 +38,7 @@ class PortfolioManager:
         self.portfolio_history: List[PortfolioSnapshot] = []
         self.strategy = TradingStrategy(initial_capital)
         self.risk_manager = RiskManager()
+        self.peak_value = initial_capital
         
     def process_signals(self, signals: List[TradingSignal], current_prices: Dict[str, float]) -> List[Trade]:
         """Process trading signals and execute trades"""
@@ -190,6 +193,13 @@ class PortfolioManager:
         
         self.current_capital = total_value
         
+        # Update peak value
+        if total_value > self.peak_value:
+            self.peak_value = total_value
+        
+        # Calculate drawdown
+        drawdown = (total_value - self.peak_value) / self.peak_value if self.peak_value > 0 else 0.0
+        
         # Create portfolio snapshot
         daily_return = 0.0
         if len(self.portfolio_history) > 0:
@@ -204,7 +214,9 @@ class PortfolioManager:
             cash=self.cash,
             positions=self.positions.copy(),
             daily_return=daily_return,
-            cumulative_return=cumulative_return
+            cumulative_return=cumulative_return,
+            drawdown=drawdown,
+            peak_value=self.peak_value
         )
         
         self.portfolio_history.append(snapshot)
@@ -268,10 +280,39 @@ class PortfolioManager:
                 'total_value': snap.total_value,
                 'cash': snap.cash,
                 'daily_return': snap.daily_return,
-                'cumulative_return': snap.cumulative_return
+                'cumulative_return': snap.cumulative_return,
+                'drawdown': snap.drawdown,
+                'peak_value': snap.peak_value
             }
             for snap in self.portfolio_history
         ]
+    
+    def get_drawdown_history(self) -> List[Dict]:
+        """Get drawdown history for visualization"""
+        return [
+            {
+                'timestamp': snap.timestamp,
+                'drawdown': snap.drawdown,
+                'peak_value': snap.peak_value,
+                'total_value': snap.total_value
+            }
+            for snap in self.portfolio_history
+        ]
+    
+    def get_cost_analysis(self) -> Dict:
+        """Get transaction cost analysis"""
+        total_costs = sum(trade.transaction_cost for trade in self.trades)
+        total_slippage = sum(trade.value * self.strategy.slippage for trade in self.trades)
+        total_value_traded = sum(trade.value for trade in self.trades)
+        
+        return {
+            'total_transaction_costs': total_costs,
+            'total_slippage': total_slippage,
+            'total_costs': total_costs + total_slippage,
+            'cost_as_percentage': ((total_costs + total_slippage) / self.initial_capital * 100) if self.initial_capital > 0 else 0,
+            'trade_count': len(self.trades),
+            'avg_cost_per_trade': (total_costs + total_slippage) / len(self.trades) if len(self.trades) > 0 else 0
+        }
     
     def reset_portfolio(self):
         """Reset portfolio to initial state"""
@@ -280,3 +321,4 @@ class PortfolioManager:
         self.positions = {}
         self.trades = []
         self.portfolio_history = []
+        self.peak_value = self.initial_capital

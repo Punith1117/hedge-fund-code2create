@@ -178,3 +178,43 @@ class RiskManager:
         for key, value in kwargs.items():
             if hasattr(self, key):
                 setattr(self, key, value)
+    
+    def calculate_rolling_metrics(self, portfolio_returns: pd.Series, window: int = 30) -> List[Dict]:
+        """Calculate rolling Sharpe ratio and volatility"""
+        if len(portfolio_returns) < window:
+            return []
+        
+        rolling_metrics = []
+        for i in range(window, len(portfolio_returns) + 1):
+            window_returns = portfolio_returns.iloc[i-window:i]
+            
+            # Rolling volatility
+            rolling_vol = window_returns.std() * np.sqrt(252)
+            
+            # Rolling Sharpe
+            excess_returns = window_returns - self.risk_free_rate / 252
+            rolling_sharpe = excess_returns.mean() / window_returns.std() * np.sqrt(252) if window_returns.std() > 0 else 0
+            
+            rolling_metrics.append({
+                'rolling_sharpe': rolling_sharpe,
+                'rolling_volatility': rolling_vol
+            })
+        
+        return rolling_metrics
+    
+    def calculate_correlation_matrix(self, returns_data: pd.DataFrame) -> Dict[str, Dict[str, float]]:
+        """Calculate correlation matrix between assets"""
+        if returns_data.empty or len(returns_data) < 30:
+            return {}
+        
+        # Calculate correlation matrix
+        corr_matrix = returns_data.corr()
+        
+        # Convert to nested dict
+        result = {}
+        for asset1 in corr_matrix.columns:
+            result[asset1] = {}
+            for asset2 in corr_matrix.columns:
+                result[asset1][asset2] = float(corr_matrix.loc[asset1, asset2])
+        
+        return result
