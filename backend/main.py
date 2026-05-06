@@ -26,6 +26,11 @@ equity_data = pd.read_csv("data/raw/equity_dataset.csv")
 macro_data = pd.read_csv("data/raw/macro_dataset.csv")
 multi_asset_data = pd.read_csv("data/raw/multi_asset_dataset.csv")
 
+# Calculate additional SMAs for equity data
+equity_data['SMA_20'] = equity_data['Price'].rolling(window=20).mean()
+equity_data['SMA_50'] = equity_data['Price'].rolling(window=50).mean()
+equity_data['SMA_200'] = equity_data['Price'].rolling(window=200).mean()
+
 @app.get("/")
 async def root():
     return {"message": "Hedge Fund API is running"}
@@ -62,9 +67,11 @@ async def get_datasets():
 
 @app.get("/api/equity")
 async def get_equity_data(limit: int = 100, offset: int = 0):
-    """Get equity price data"""
+    """Get equity price data with SMA indicators"""
     try:
         data = equity_data.iloc[offset:offset+limit].copy()
+        # Select only relevant columns for the chart
+        data = data[['Date', 'Price', 'SMA_20', 'SMA_50', 'SMA_200']]
         # Replace NaN values with None for JSON serialization
         data = data.replace({np.nan: None})
         return {
