@@ -1,9 +1,9 @@
 # Hedge Fund Risk Modeling & Semi-Automated Trading System
 
 ## Team Information
-- **Team Name**: Code2Create Challenge Team
+- **Team Name**: Biased_Coin
 - **Year**: 2026
-- **All-Female Team**: [Yes/No]
+- **All-Female Team**: No
 
 ## Overview
 
